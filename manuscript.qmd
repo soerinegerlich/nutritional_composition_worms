@@ -1,0 +1,121 @@
+---
+title: "Optimizing Enchytraeus albidus production and nutritional value as live feed through agri-food waste materials"
+author: "Gerlich, H.S., Schön, M., Grantland, D., Holmstrup, M. & Slotsbo, S."
+format: html
+editor: visual
+type: manuscript
+comments:
+  hypothesis: true
+---
+
+## 
+
+```{r}
+# packages 
+pkgs <- c("readxl", "dplyr", "fields", "plotrix", "tidyr", "ggplot2", "car",
+          "tidyverse", "reshape2", "multcompView", "janitor", "lme4")
+vapply(pkgs, library, FUN.VALUE = logical(1L), character.only = TRUE,
+       logical.return = TRUE)
+
+# Load dataset
+rawdata <- read_excel("data/all_data_maja.xlsx")
+#rawdata <- read_excel("data/all_data.xlsx", sheet = "raw_data_simplified")
+
+# Delete the data from pilot experiment, bad observations and Hannas seaweed experiment   
+yesdata <- rawdata[rawdata$`count_data`=='yes',]  
+
+# Clean row names
+yesdata <- yesdata %>%
+  mutate(food = gsub("'", "", food))
+
+yesdata <- yesdata %>%
+  mutate(food = gsub(" ", "_", food))
+
+yesdata <- yesdata %>%
+  mutate(food = gsub("-", "_", food))
+
+yesdata <- yesdata %>%
+  mutate(food = gsub(":", "_", food))
+
+# Clean column names
+yesdata %>%
+  clean_names() -> yesdata
+
+
+#library(ggthemes)
+
+yesdata$food <- gsub("_", " ", yesdata$food)
+
+yesdata$food <- factor(yesdata$food,                 # Relevel group factor
+                       levels = c("Baking yeast", "Oatmeal", "Oatmeal Wine Yeast Coffee Grind (33 33 33)", "Oatmeal after 3 weeks", "Oatmeal Brewers grain (50 50)", 
+                                  "Oatmeal Coffee Grind (50 50)", "Wine yeast", "Oatmeal Wine Yeast (50 50)", "Oatmeal Protein powder (66 33)", "Oatmeal Oil (80 20)",
+                                  "Oatmeal Protein powder (50 50)", "Fat reduced oatmeal", "Coffee Grind Protein powder (33 66)", "Yeast extract", "Coffee Grind Protein powder (66 33)",
+                                  "Brewers yeast", "Brewers grain", "Protein powder", "Sugar kelp", "Coffee Grind Oil (66 33)", "Coffee Grind", "Potato starch", "No feeding"))
+
+
+###############################################################################
+# Add normalized biomass within each series
+yesdata <- yesdata %>%
+  group_by(series) %>%
+  mutate(
+    control_mean_biomass = mean(biomass[food == "Oatmeal"], na.rm = TRUE),  # Mean of the control in each series
+    control_mean_number = mean(number[food == "Oatmeal"], na.rm = TRUE),  # Mean of the control in each series
+    norm_biomass = biomass / control_mean_biomass,                          # Normalized biomass
+    norm_number = number / control_mean_number                          # Normalized number
+  )
+
+
+# Step 2: Calculate summary statistics (mean and SE) for each food and series
+summary_data <- yesdata %>%
+  group_by(food, series) %>%
+  summarise(
+    mean_norm_biomass = mean(norm_biomass, na.rm = TRUE),
+    se_norm_biomass = sd(norm_biomass, na.rm = TRUE) / sqrt(n()),
+    mean_norm_number = mean(norm_number, na.rm = TRUE),
+    se_norm_number = sd(norm_number, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Make sure "oatmeal" is the reference level
+yesdata$food <- relevel(yesdata$food, ref = "Oatmeal")
+
+#There are a few issues with the residuals
+# Try to log biomass
+
+m.2 <- lmer(log(norm_biomass) ~ food + (1 | series), data = yesdata)
+summary(m.2)
+
+anova(m.2)
+
+library(multcomp)
+library(knitr)
+
+# Apply Dunnett's test
+dunnett_test <- glht(m.2, linfct = mcp(food = "Dunnett"))
+
+# Show the results
+summary(dunnett_test)
+
+# Extract the summary of the Dunnett test
+dunnett_summary <- summary(dunnett_test)
+
+# Create a data frame with the test results
+dunnett_table <- data.frame(
+  Treatment = names(dunnett_summary$test$coefficients),  # Use names() to extract the treatment names
+  Estimate = dunnett_summary$test$coefficients,
+  Std.Error = sqrt(diag(vcov(dunnett_test))),  # Calculate standard errors manually from the covariance matrix
+  t.value = dunnett_summary$test$tstat,
+  Pvalue = dunnett_summary$test$pvalues
+)
+
+dunnett_table %>%
+  kable(
+    format = "latex",
+    caption = "Results of Dunnett's Test Comparing Treatments to Control (Oatmeal)",
+    booktabs = TRUE
+  )
+
+
+```
